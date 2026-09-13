@@ -1,0 +1,20 @@
+# Normalise line endings so the repo behaves the same on every OS.
+* text=auto
+
+# Shell scripts must stay LF or they fail on Mac/Linux with "bad interpreter: 'bash\r'".
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+
+# Windows batch files must stay CRLF or cmd.exe misparses labels.
+*.bat  text eol=crlf
+
+# Binary — never touch.
+*.jpg   binary
+*.png   binary
+*.woff2 binary
+*.pt    binary
+*.pth   binary
+*.onnx  binary
