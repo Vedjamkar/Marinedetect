@@ -11,7 +11,7 @@ requirements.txt, then runs a real verification (imports, CUDA state, weights
 present, test suite) and prints exactly what works and what does not.
 
 Deliberately stdlib-only so it runs on a bare Python with nothing installed.
-Requires Python 3.10+ (3.11 recommended).
+Needs a CPython 3.10-3.13 somewhere on the machine; it finds one itself.
 """
 from __future__ import annotations
 
@@ -55,15 +55,85 @@ def has_nvidia_gpu() -> bool:
     return bool(out(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]))
 
 
+# torch 2.6.0 ships wheels for CPython 3.9-3.13 only. A machine whose default
+# `python` is 3.14 (increasingly common) must NOT be allowed to build the venv
+# with it, or the very first pip install fails with "no matching distribution".
+SUPPORTED = ((3, 10), (3, 13))
+
+
+def _interpreter_version(cmd: list[str]):
+    """Return (major, minor, path) for a candidate interpreter, or None."""
+    try:
+        out = subprocess.check_output(
+            [*cmd, "-c", "import sys;print(sys.version_info[0],sys.version_info[1],sys.executable)"],
+            stderr=subprocess.DEVNULL, text=True, timeout=20,
+        ).split()
+        return int(out[0]), int(out[1]), out[2]
+    except Exception:
+        return None
+
+
+def find_compatible_python():
+    """Find an interpreter torch actually supports, preferring newest.
+
+    Tries the version-specific launchers first so a stray 3.14 on PATH is
+    skipped rather than picked, then falls back to whatever is running this
+    script if that happens to be in range.
+    """
+    candidates = []
+    for minor in (13, 12, 11, 10):
+        if IS_WIN:
+            candidates.append(["py", f"-3.{minor}"])
+        candidates.append([f"python3.{minor}"])
+    candidates.append([sys.executable])
+    for c in ("python3", "python"):
+        candidates.append([c])
+
+    seen = set()
+    for cmd in candidates:
+        if not shutil.which(cmd[0]):
+            continue
+        info = _interpreter_version(cmd)
+        if not info:
+            continue
+        major, minor, path = info
+        if path in seen:
+            continue
+        seen.add(path)
+        if SUPPORTED[0] <= (major, minor) <= SUPPORTED[1]:
+            return cmd, f"{major}.{minor}", path
+    return None
+
+
 def create_venv() -> None:
     if PY.exists():
         print(f"{OK} venv already exists at {VENV}")
         return
-    print(f"Creating venv at {VENV} ...")
+
     if shutil.which("uv"):
+        print(f"Creating venv at {VENV} with uv (Python 3.11) ...")
         run(["uv", "venv", "--python", "3.11", str(VENV)])
-    else:
-        run([sys.executable, "-m", "venv", str(VENV)])
+        if PY.exists():
+            return
+        print(f"{WARN} uv could not provision Python 3.11; falling back to a local interpreter")
+
+    found = find_compatible_python()
+    if not found:
+        here = f"{sys.version_info[0]}.{sys.version_info[1]}"
+        print()
+        print(f"{BAD} No compatible Python found.")
+        print(f"       This script is running under Python {here}, but the pinned PyTorch build")
+        print(f"       supports Python {SUPPORTED[0][0]}.{SUPPORTED[0][1]} to {SUPPORTED[1][0]}.{SUPPORTED[1][1]} only.")
+        print()
+        print("       Install Python 3.12 from https://www.python.org/downloads/")
+        if IS_WIN:
+            print("       (tick \"Add python.exe to PATH\"), or run:   py install 3.12")
+        print("       then run this script again. It will find it automatically.")
+        sys.exit(1)
+
+    cmd, ver, path = found
+    print(f"Creating venv at {VENV} with Python {ver} ({path}) ...")
+    run([*cmd, "-m", "venv", str(VENV)])
     if not PY.exists():
         sys.exit(f"{BAD} venv creation failed")
 

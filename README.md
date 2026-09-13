@@ -22,7 +22,8 @@ filled with a placeholder.
 > **New to this project?** Start with **[QUICKSTART.md](QUICKSTART.md)** — a five-minute
 > step-by-step guide with troubleshooting. This file is the full reference.
 
-Requires **Python 3.10+** (3.11 recommended). One command does everything:
+Requires **Python 3.10–3.13** (3.14 is not supported by the pinned PyTorch; the setup script
+will find a compatible interpreter if one is installed). One command does everything:
 
 ```bash
 python scripts/setup.py

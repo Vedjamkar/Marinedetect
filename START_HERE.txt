@@ -11,17 +11,28 @@ WHAT THIS IS
 
 
 TO RUN IT
-  1.  Install Python 3.10 or newer (3.11 recommended) from python.org
-  2.  Open a terminal in this folder
-  3.  python scripts/setup.py
-  4.  Windows:      .venv\Scripts\activate
-      Mac / Linux:  source .venv/bin/activate
-  5.  python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
-  6.  Open http://127.0.0.1:8000/
 
-  Step 3 does everything: creates an isolated environment, detects whether you
-  have an NVIDIA GPU, installs the matching PyTorch build, then verifies the
-  install and runs the tests. Allow 5-15 minutes, mostly downloading PyTorch.
+  Windows:      double-click  START_DEMO.bat
+  Mac / Linux:  chmod +x start_demo.sh   then   ./start_demo.sh
+
+  That is the whole thing. It finds a suitable Python, builds an isolated
+  environment on first run, frees port 8000 if something is on it, starts the
+  server, and opens your browser.
+
+  FIRST RUN TAKES 5-15 MINUTES, almost all of it downloading PyTorch. Do this
+  BEFORE the day you present, on the laptop you will present from, on good
+  wifi. Every later run starts in seconds and needs no internet at all.
+
+  You need Python 3.10, 3.11, 3.12 or 3.13 installed (python.org). NOT 3.14 -
+  the pinned PyTorch has no wheels for it. If 3.14 is all you have, install
+  3.12 alongside it; the setup finds the right one on its own. On Windows,
+  tick "Add python.exe to PATH" during installation.
+
+  Manual route, if you prefer a terminal:
+      python scripts/setup.py
+      .venv\Scriptsctivate            (Mac/Linux: source .venv/bin/activate)
+      python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+      then open http://127.0.0.1:8000/
 
 
 ONCE IT IS OPEN

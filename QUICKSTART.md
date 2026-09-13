@@ -10,8 +10,10 @@ Get it running in about five minutes. For the full documentation see [README.md]
 python --version
 ```
 
-You need **3.10 or newer** (3.11 is what this was built on). If that command fails or shows
-something older, install Python 3.11 from [python.org](https://www.python.org/downloads/).
+You need **3.10, 3.11, 3.12 or 3.13**. If that command fails, shows something older, or shows
+**3.14** (the pinned PyTorch has no 3.14 wheels), install Python 3.12 from
+[python.org](https://www.python.org/downloads/). The setup script searches for a compatible
+version on its own, so having 3.14 installed *as well* is fine — it just can't be the only one.
 
 > **Windows note:** if `python` opens the Microsoft Store, use `py -3.11` instead everywhere
 > below, or install Python from python.org and tick "Add python.exe to PATH".

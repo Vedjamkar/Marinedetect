@@ -19,6 +19,12 @@ if exist ".venv\Scripts\python.exe" (
     goto :have_env
 )
 
+:: Prefer a version torch supports. A bare "py -3" can land on 3.14, which
+:: has no torch wheels; setup.py guards against that too, but be explicit.
+for %%v in (3.12 3.13 3.11 3.10) do (
+    py -%%v --version >nul 2>&1
+    if !errorlevel! equ 0 ( set "PY=py -%%v" & goto :setup )
+)
 py -3 --version >nul 2>&1
 if !errorlevel! equ 0 ( set "PY=py -3" & goto :setup )
 
@@ -30,7 +36,7 @@ if !errorlevel! equ 0 (
 
 echo   Python was not found.
 echo.
-echo   Install Python 3.10 or newer from https://www.python.org/downloads/
+echo   Install Python 3.12 from https://www.python.org/downloads/
 echo   During installation, tick "Add python.exe to PATH".
 echo.
 pause

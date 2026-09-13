@@ -63,8 +63,12 @@ def run_inference(
         geometry_obj = SonarGeometry()
 
     # --- model availability gate ---
+    # Refuse early only when a detection is the point of the call. The
+    # full-frame shadow analysis is the documented model-free path, so a
+    # request that asks for it must get through with an empty detection list
+    # and a stated reason - the detect step below handles that.
     yolo_status = yolo_service.status()
-    if not yolo_status["loaded"]:
+    if not yolo_status["loaded"] and not analyze_full_frame:
         raise HTTPException(
             status_code=503,
             detail={
@@ -103,10 +107,21 @@ def run_inference(
 
         # --- detect ---
         t0 = time.perf_counter()
+        detector_error = None
         try:
             raw_detections = yolo_service.predict(rgb)
         except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail={"mode": "unavailable", "reason": str(exc)}) from exc
+            # No detector loaded. That is only fatal if a detection was the
+            # whole point of the call. The full-frame shadow analysis needs no
+            # model at all - it is the documented "works without weights" path -
+            # so when it was asked for, carry on with zero detections and let
+            # the response say why there are none.
+            if not analyze_full_frame:
+                raise HTTPException(
+                    status_code=503, detail={"mode": "unavailable", "reason": str(exc)}
+                ) from exc
+            detector_error = str(exc)
+            raw_detections = []
         timings_ms["detect"] = (time.perf_counter() - t0) * 1000
 
         # --- fuse: shadow measurement + height + segmentation per detection ---
@@ -116,6 +131,11 @@ def run_inference(
 
         # --- optional full-frame shadow analysis (no detector involved) ---
         full_frame = FullFrameAnalysis(requested=analyze_full_frame)
+        if detector_error:
+            full_frame.note = (
+                f"No detector loaded ({detector_error}). Detections are empty; the "
+                "full-frame shadow analysis below used no model."
+            )
         if analyze_full_frame:
             ff_shadow = measure_shadow(
                 gray, settings.shadow_direction, settings.shadow_threshold_k
@@ -161,8 +181,9 @@ def run_inference(
         timings_ms["total"] = (time.perf_counter() - t_total_start) * 1000
 
         return InferenceResponse(
-            mode="trained",
-            trained_model=True,
+            # Never claim a trained model produced this if none was loaded.
+            mode="unavailable" if detector_error else "trained",
+            trained_model=not detector_error,
             detections=[item.detection for item in fused],
             full_frame=full_frame,
             geometry=geometry_obj,

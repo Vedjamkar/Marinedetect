@@ -29,7 +29,7 @@ That distinction is the whole point of the project. If you remember one sentence
 
 | Component | Choice | Why |
 |---|---|---|
-| Language | Python 3.11 | Ecosystem for the model tooling |
+| Language | Python 3.10–3.13 | Ecosystem for the model tooling. **Not 3.14** — the pinned torch has no wheels for it; setup finds a compatible one |
 | API | FastAPI + Uvicorn | Typed request/response models, automatic validation |
 | Schemas | Pydantic v2 | The honesty rules are enforced in the type system, not by convention |
 | Detection | Ultralytics YOLOv8n | Small enough to train on a 4 GB GPU |
