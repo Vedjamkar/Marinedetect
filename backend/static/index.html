@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marinedetect — Sonar Inference</title>
+<!-- Fonts are served locally, not from Google. A presentation venue with no
+     working wifi would otherwise fall back to Times New Roman mid-demo. -->
+<link rel="stylesheet" href="/fonts/fonts.css">
+<style>
+  :root{
+    /* Hydrographic chart: buff paper, navy ink, and the magenta that real
+       charts reserve for cautions and special features. Sonar imagery is dark,
+       so it sits on the page the way a plate sits in a survey report. */
+    --ground:#EDE7DA; --surface:#F6F2E9; --surface-2:#E3DCCC;
+    --line:#C7BCA5; --line-soft:#DAD1BE;
+    --text:#182430; --text-2:#43535F; --text-3:#7A8189;
+    --highlight:#A3195B; --highlight-bg:#F3E0E9;   /* chart magenta */
+    --shadow:#1D5C6B;   --shadow-bg:#DDEAEC;       /* chart blue */
+    --critical:#9E3324; --critical-bg:#F6E2DC;
+    --caution:#7C5C12;  --caution-bg:#F1E7CE;
+    --solid:#1F5F42;    --solid-bg:#DDE9DF;
+    --f:"Spectral",Georgia,"Times New Roman",serif;
+    --fc:"Fira Sans Condensed","Helvetica Neue",Arial,sans-serif;
+    --m:"Fira Mono",ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ground);color:var(--text);font-family:var(--f);font-size:16.5px;line-height:1.55;}
+  .wrap{max-width:1560px;margin:0 auto;padding:24px 28px 80px;}
+
+  /* ---------- the reasoning chain ----------
+     One column, generous rhythm. Each step is a claim with its evidence
+     beneath it, and the connectors carry the value forward. Weight and
+     space do the hierarchy; colour is reserved for the answer and the
+     refusal. */
+  /* Prose is capped for readability, but figures are not prose — a three-up
+     segmentation panel squeezed into a 660px measure gives each view ~215px,
+     which is too small to judge a mask boundary. Text keeps the measure;
+     evidence breaks out to the full column. */
+  #results{display:block;}
+  .step-head, .step .sub, .note, .yielded, .timing, .split p{max-width:660px;}
+  .step h3{max-width:660px;}
+
+  .step{padding:26px 0 4px;border-top:1px solid var(--line-soft);}
+  .step:first-child{border-top:none;padding-top:6px;}
+  .step-head{margin-bottom:16px;}
+  .kicker{display:block;font-family:var(--fc);font-size:12.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+          color:var(--text-3);margin-bottom:8px;}
+  .step h3{font-family:var(--f);font-size:24px;font-weight:600;letter-spacing:-.015em;line-height:1.25;
+           margin:0;text-wrap:balance;}
+  .step .sub{font-size:15px;line-height:1.55;color:var(--text-2);margin:9px 0 0;max-width:60ch;}
+
+  .link{display:flex;align-items:center;gap:12px;padding:14px 0 10px;}
+  .link::before{content:"";width:1px;height:26px;background:var(--line);margin-left:11px;}
+  .link span{font-size:12.5px;letter-spacing:.03em;color:var(--text-3);font-style:italic;}
+
+  .ev-img{width:100%;height:auto;display:block;border-radius:3px;
+          border:1px solid var(--line);background:var(--ground);}
+  .ev-img.narrow{max-width:100%;width:100%;margin:0 auto;}
+
+  .note{font-size:13.5px;line-height:1.6;color:var(--text-3);margin:13px 0 0;max-width:62ch;}
+  .note b{color:var(--text-2);}
+
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:18px;}
+  .split .sw{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:8px;
+             vertical-align:-1px;}
+  .split b{font-size:14px;font-weight:700;}
+  .split p{font-size:13px;line-height:1.5;color:var(--text-3);margin:6px 0 0;}
+  .split.compare > div{background:var(--surface);border:1px solid var(--line);
+                       border-radius:3px;padding:13px 15px;}
+  .split.compare b{display:block;font-size:12.5px;font-weight:600;letter-spacing:0;
+                   color:var(--text-3);margin-bottom:5px;}
+  .split.compare span{font-family:var(--m);font-size:20px;font-weight:700;color:var(--text);}
+  @media(max-width:560px){.split{grid-template-columns:1fr;gap:16px;}}
+
+  .yielded{margin:16px 0 0;font-size:14px;color:var(--text-2);}
+  .yielded b{font-family:var(--m);font-size:19px;color:var(--highlight);margin-left:6px;}
+
+  .step.climax{background:var(--surface);border:1px solid var(--line);border-radius:4px;
+               padding:26px 26px 22px;margin-top:14px;}
+  .answer{font-size:64px;font-weight:800;line-height:1;letter-spacing:-.035em;
+          color:var(--highlight);margin:4px 0 14px;}
+  .answer span{font-size:24px;font-weight:600;color:var(--text-3);margin-left:8px;letter-spacing:0;}
+  .answer.off{color:var(--text-3);font-size:44px;}
+
+  .verify-pair{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+               border:1px solid var(--line);border-radius:3px;overflow:hidden;margin-top:4px;}
+  .verify-pair > div{background:var(--surface);padding:14px 16px;}
+  .verify-pair b{display:block;font-size:12.5px;font-weight:600;letter-spacing:0;
+                 color:var(--text-3);margin-bottom:6px;}
+  .verify-pair span{font-family:var(--m);font-size:26px;font-weight:700;}
+  .verify-pair .got span{color:var(--solid);}
+
+  .step.refuse{border-left:2px solid var(--shadow);padding-left:18px;margin-top:22px;}
+  .step.refuse h3{font-size:18px;color:var(--text-2);}
+
+  .timing{font-family:var(--m);font-size:11.5px;color:var(--text-3);
+          margin:30px 0 0;padding-top:14px;border-top:1px solid var(--line-soft);}
+
+  .step .chain{margin:0 0 4px;font-size:13px;}
+  .step figure{margin:0;}
+  }
+
+  header{display:flex;align-items:stretch;justify-content:space-between;gap:18px;flex-wrap:wrap;
+         padding:11px 14px;margin-bottom:16px;background:var(--surface);
+         border:1px solid var(--line);border-radius:2px;
+         box-shadow:inset 0 1px 0 rgba(255,255,255,.03);}
+  .brand{display:flex;flex-direction:column;justify-content:center;gap:3px;}
+  h1{font-family:var(--f);font-size:23px;font-weight:700;letter-spacing:.01em;margin:0;}
+  .tag{font-family:var(--fc);font-size:12.5px;font-weight:500;letter-spacing:.02em;color:var(--text-3);}
+
+  /* Instrument status bar: fixed-width fields that never reflow as values
+     change, so the eye can track one field without it moving. */
+  .statbar{display:flex;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:2px;}
+  .stat{background:var(--surface-2);padding:6px 13px;min-width:86px;
+        display:flex;flex-direction:column;gap:3px;}
+  .stat b{font-family:var(--fc);font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text-3);}
+  .stat span{font-family:var(--m);font-size:13px;font-weight:500;letter-spacing:0;color:var(--text-2);}
+  .stat span.ok{color:var(--solid);}
+  .stat span.warn{color:var(--highlight);}
+  .stat span.err{color:var(--critical);}
+  .stat span.off{color:var(--text-3);}
+  @media(max-width:700px){ .statbar{flex-wrap:wrap;} .stat{min-width:74px;} }
+
+  /* Pipeline legend, styled as a channel strip so it belongs to the console
+     rather than sitting on top of it as a web-page banner. */
+  .layers-intro{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+     border:1px solid var(--line);border-radius:2px;overflow:hidden;margin-bottom:16px;}
+  .layers-intro > div{background:var(--surface);padding:10px 14px;}
+  .layers-intro b{display:block;font-size:13.5px;font-weight:700;letter-spacing:0;
+     color:var(--text);margin-bottom:4px;}
+  .layers-intro span{font-size:12.5px;line-height:1.45;color:var(--text-3);}
+  @media(max-width:820px){.layers-intro{grid-template-columns:1fr;}}
+
+  .cols{display:grid;grid-template-columns:330px minmax(0,1fr);gap:26px;align-items:start;}
+  @media(max-width:900px){.cols{grid-template-columns:1fr;}}
+
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:18px;}
+  .panel h2{font-size:13px;font-weight:600;letter-spacing:0;color:var(--text-3);margin:0 0 12px;}
+
+  #drop{border:2px dashed var(--line);border-radius:4px;padding:26px 16px;text-align:center;
+        cursor:pointer;transition:border-color .15s,background .15s;}
+  #drop:hover,#drop.over{border-color:var(--highlight);background:var(--highlight-bg);}
+  #drop p{margin:0;font-size:13.5px;color:var(--text-2);}
+  #drop .big{font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px;}
+  #fname{font-family:var(--m);font-size:11.5px;color:var(--highlight);margin-top:9px;word-break:break-all;}
+
+  fieldset{border:none;padding:0;margin:20px 0 0;}
+  legend{font-size:12px;font-weight:600;letter-spacing:0;color:var(--text-3);
+         padding:0;margin-bottom:4px;}
+  .hint{font-size:12px;color:var(--text-3);margin:0 0 12px;line-height:1.45;}
+  label{display:block;font-size:12px;color:var(--text-2);margin:10px 0 3px;}
+  input[type=number]{width:100%;background:var(--ground);border:1px solid var(--line);border-radius:3px;
+        color:var(--text);font-family:var(--m);font-size:13px;padding:7px 9px;}
+  input[type=number]:focus{outline:2px solid var(--highlight);outline-offset:1px;border-color:var(--highlight);}
+
+  #samples{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;}
+  .samp{width:100%;margin:0;padding:0;background:var(--ground);border:1px solid var(--line);
+        border-radius:3px;overflow:hidden;cursor:pointer;display:block;}
+  .samp:hover{border-color:var(--highlight);}
+  .samp.sel{border-color:var(--highlight);outline:2px solid var(--highlight);outline-offset:-2px;}
+  .samp img{width:100%;height:60px;object-fit:cover;display:block;filter:brightness(1.1) contrast(1.05);}
+  .samp span{display:block;font-family:var(--f);font-size:10.5px;font-weight:600;letter-spacing:0;
+             color:var(--text-3);padding:3px 2px;}
+  .samp.sel span{color:var(--highlight);}
+  .samp.verify{border-color:var(--solid);}
+  .samp.verify span{color:var(--solid);}
+  .samp.verify img{filter:none;}
+  .samp .needs{display:block;font-family:var(--fc);font-size:9px;font-style:normal;
+               letter-spacing:.03em;color:var(--shadow);padding:0 2px 3px;}
+
+  button{width:100%;margin-top:18px;font-family:var(--fc);letter-spacing:.04em;background:var(--highlight);color:var(--surface);border:none;border-radius:3px;
+         font-family:var(--f);font-size:14px;font-weight:700;letter-spacing:.02em;padding:11px;cursor:pointer;}
+  button:hover:not(:disabled){filter:brightness(1.08);}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+
+
+
+
+
+  .empty{color:var(--text-3);font-size:14px;padding:40px 0;text-align:center;}
+
+  .shot img{width:100%;border-radius:3px;display:block;background:var(--ground);}
+
+  .timings{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+  .t{font-family:var(--m);font-size:12px;background:var(--surface-2);color:var(--text-2);
+     padding:3px 8px;border-radius:3px;}
+  .t b{color:var(--text);font-weight:700;}
+
+  .det{background:var(--surface);border:1px solid var(--line);border-radius:4px;overflow:hidden;}
+  .det-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+         padding:12px 16px;background:var(--surface-2);border-bottom:1px solid var(--line);}
+  .det-h .n{font-family:var(--m);font-size:12px;font-weight:700;color:var(--highlight);}
+  .det-h .cls{font-size:17.5px;font-weight:700;}
+  .det-h .conf{font-family:var(--m);font-size:13px;color:var(--text-2);margin-left:auto;}
+  .det-b{padding:16px;display:grid;gap:16px;}
+
+  .chain{font-family:var(--m);font-size:14px;line-height:1.9;background:var(--ground);
+         border-left:3px solid var(--highlight);border-radius:3px;padding:12px 14px;overflow-x:auto;}
+  .chain .c{color:var(--text-3);}
+  .chain .v{color:var(--highlight);font-weight:700;}
+  .chain .r{color:var(--solid);font-weight:700;}
+
+  /* Genuine failure: something broke. Red. */
+  .na{background:var(--critical-bg);border-radius:3px;padding:12px 15px;font-size:14px;color:var(--text-2);}
+  .na b{display:block;font-size:12.5px;font-weight:600;letter-spacing:0;
+        color:var(--critical);margin-bottom:3px;}
+  /* Absent BY DESIGN: an input we don't have, or a layer we deliberately
+     don't compute. This is the honesty model working, not a fault, so it
+     must not wear error colours. */
+  .info{background:var(--surface-2);border-left:3px solid var(--shadow);border-radius:3px;
+        padding:12px 15px;font-size:14px;color:var(--text-2);}
+  .info b{display:block;font-size:12.5px;font-weight:600;letter-spacing:0;
+        color:var(--shadow);margin-bottom:3px;}
+  .info .why{color:var(--text-3);font-size:13px;display:block;margin-top:5px;}
+
+  .ff-note{font-size:13px;line-height:1.5;color:var(--text-3);margin:0;
+           padding:10px 13px;background:var(--surface-2);border-radius:3px;}
+  .ff-note b{color:var(--text-2);}
+
+  /* Never upscale past the rendered size - the panel is already scaled to a
+     sensible long edge server-side, and blowing it up just makes it blocky
+     and pushes everything else off screen. Shrink to fit if it is larger. */
+  .seg-fig img{max-width:100%;height:auto;border-radius:2px;display:block;margin:0 auto;}
+  .seg-fig figcaption{margin-top:9px;}
+  .seg-legend{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line-soft);
+              border:1px solid var(--line);border-radius:3px;overflow:hidden;margin-top:15px;}
+  .seg-legend > div{background:var(--surface);padding:11px 14px;}
+  .seg-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;
+                vertical-align:middle;margin-right:7px;}
+  .seg-legend b{font-size:12.5px;font-weight:700;}
+  .seg-legend span{display:block;font-family:var(--m);font-size:12px;color:var(--text-2);
+                   margin:4px 0 3px 17px;}
+  .seg-legend em{display:block;font-style:normal;font-size:12px;line-height:1.4;
+                 color:var(--text-3);margin-left:17px;}
+  @media(max-width:620px){.seg-legend{grid-template-columns:1fr;}}
+
+  .xc{border-radius:3px;overflow:hidden;border:1px solid var(--line);}
+  .xc-h{font-size:13px;font-weight:700;letter-spacing:.03em;padding:9px 14px;
+        display:flex;justify-content:space-between;align-items:baseline;}
+  .xc-h span{font-family:var(--m);font-size:12px;font-weight:500;opacity:.85;}
+  .xc.agree .xc-h{background:var(--solid-bg);color:var(--solid);}
+  .xc.disagree .xc-h{background:var(--highlight-bg);color:var(--highlight);}
+  .xc-b{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line-soft);}
+  .xc-b > div{background:var(--surface);padding:10px 14px;}
+  .xc-b b{display:block;font-size:9.5px;font-weight:700;letter-spacing:.08em;
+          color:var(--text-3);margin-bottom:3px;}
+  .xc-b span{font-family:var(--m);font-size:15px;font-weight:700;color:var(--text);}
+  .xc > p{margin:0;padding:10px 14px;font-size:13px;line-height:1.45;
+          color:var(--text-2);background:var(--surface);border-top:1px solid var(--line-soft);}
+
+  /* geometry simulator */
+  #sim .lbl{font-family:var(--f);font-size:11px;font-weight:600;letter-spacing:.02em;
+            fill:currentColor;opacity:.45;}
+  #sim .dim-l{font-family:var(--m);font-size:12px;font-weight:700;text-anchor:middle;}
+  #sim .ray-l{font-family:var(--f);font-size:10.5px;text-anchor:middle;opacity:.75;}
+  #sim .handle-l{font-family:var(--fc);font-size:12px;font-weight:600;fill:currentColor;}
+  #sim .hint-l{font-family:var(--fc);font-size:10.5px;font-style:italic;
+               fill:currentColor;opacity:.45;}
+
+  .sim-say{font-size:16.5px;line-height:1.65;color:var(--text-2);margin:0;max-width:64ch;}
+  .sim-say b{font-family:var(--m);font-size:16px;font-weight:500;color:var(--text);}
+  .sim-say b.key{color:var(--highlight);font-weight:700;}
+  .sim-say.quiet{font-size:14px;color:var(--text-3);margin-top:9px;}
+  .sim-say.quiet b{font-size:13.5px;color:var(--text-2);}
+  #sim .dim-w{font-family:var(--fc);font-size:11.5px;font-weight:600;fill:currentColor;opacity:.75;}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;width:170px;height:3px;
+                    background:var(--line);border-radius:2px;outline:none;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;
+      border-radius:50%;background:var(--highlight);cursor:pointer;border:none;}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;
+      background:var(--highlight);cursor:pointer;border:none;}
+
+  .meth{display:inline-block;font-size:11.5px;font-weight:600;letter-spacing:0;
+        padding:2px 7px;border-radius:3px;background:var(--shadow-bg);color:var(--shadow);}
+
+  figure{margin:0;}
+  figcaption{font-size:12.5px;color:var(--text-3);margin-top:7px;line-height:1.45;}
+  .assump{font-size:11.5px;color:var(--text-3);margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">
+    <h1>Marinedetect</h1>
+    <span class="tag">Side-scan sonar &mdash; finding objects and measuring how tall they stand</span>
+  </div>
+  <div class="statbar">
+    <div class="stat"><b>Detector</b><span id="st-yolo">&mdash;</span></div>
+    <div class="stat"><b>Segmenter</b><span id="st-unet">&mdash;</span></div>
+    <div class="stat"><b>Running on</b><span id="st-dev">&mdash;</span></div>
+  </div>
+</header>
+
+<div class="layers-intro">
+  <div><b>1 &middot; Perception</b><span>YOLO locates candidates. U&#8209;Net labels highlight and shadow pixels. Image coordinates only.</span></div>
+  <div><b>2 &middot; Acoustic geometry</b><span>Slant range, ground range, and object height derived from shadow length.</span></div>
+  <div><b>3 &middot; Spatial reference</b><span>GPS/INS and bathymetry give position and seabed depth. Not implemented &mdash; reported as absent.</span></div>
+</div>
+
+<div class="cols">
+
+  <div class="panel">
+    <h2>Input</h2>
+    <div id="drop">
+      <p class="big">Drop a sonar image</p>
+      <p>or click to choose &mdash; PNG, JPG, TIFF</p>
+      <div id="fname"></div>
+    </div>
+    <input type="file" id="file" accept="image/*" hidden>
+
+    <div id="samples-wrap" hidden>
+      <h2 style="margin-top:20px">Sample images</h2>
+      <p class="hint">Held-out side-scan frames. Click one to load it — no file picker needed.
+      Tiles marked <b style="color:var(--shadow)">debris model</b> need the crab-pot detector; see <code>.env.example</code> to switch.</p>
+      <div id="samples"></div>
+    </div>
+
+    <fieldset>
+      <legend>Sonar geometry</legend>
+      <p class="hint">Height is computed only from real inputs. Leave blank and the field reports what is missing rather than guessing.</p>
+      <label for="alt">Towfish altitude H (m)</label>
+      <input type="number" id="alt" step="0.1" placeholder="e.g. 12.0">
+      <label for="rng">Slant range R (m)</label>
+      <input type="number" id="rng" step="0.1" placeholder="e.g. 40.0">
+      <label for="res">Across-track resolution (m/px)</label>
+      <input type="number" id="res" step="0.001" placeholder="e.g. 0.05">
+    </fieldset>
+
+    <button id="go" disabled>Run inference</button>
+  </div>
+
+  <div id="results"><div class="empty">Results will appear here.</div></div>
+</div>
+
+<section class="panel" style="margin-top:26px">
+  <h2>Interactive geometry — drag the towfish and the target</h2>
+  <p class="hint" style="max-width:74ch">
+    Drag the <b style="color:var(--text)">towfish</b> to change its altitude, the
+    <b style="color:var(--highlight)">target</b> to change its range, or the slider to change the
+    object's height. The shadow length follows from the geometry alone.
+    <b style="color:var(--text)">The pipeline runs this backwards</b> — it measures the shadow in the
+    image and solves for the height. The dashed <b style="color:var(--shadow)">grazing ray</b> passes
+    the top of the object and lands where the shadow ends; that is what ties shadow length to height.
+    Assumes a locally flat seabed.
+  </p>
+  <div id="sim-wrap"><svg id="sim" viewBox="0 0 880 312" style="width:100%;height:auto;touch-action:none;cursor:grab"></svg></div>
+  <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:center;margin-top:12px">
+    <label style="margin:0;display:flex;align-items:center;gap:10px">
+      <span>Object height</span>
+      <input type="range" id="simH" min="0.2" max="6" step="0.1" value="1.6">
+      <b style="font-family:var(--m);color:var(--highlight)" id="simHv">1.6 m</b>
+    </label>
+    <button id="simApply" style="width:auto;margin:0;padding:8px 14px;font-size:12.5px">
+      Use these values in the form
+    </button>
+  </div>
+  <div class="chain" id="simOut" style="margin-top:14px"></div>
+</section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const drop = $('#drop'), fileIn = $('#file'), go = $('#go'), out = $('#results');
+let chosen = null;
+let selectedMeta = {};
+
+drop.onclick = () => fileIn.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); pick(e.dataTransfer.files[0]); };
+fileIn.onchange = () => pick(fileIn.files[0]);
+
+function pick(f){ if(!f) return; chosen = f; $('#fname').textContent = f.name; go.disabled = false; }
+
+// ---- sample gallery ----
+fetch('/samples/index.json').then(r=>r.ok?r.json():Promise.reject()).then(list=>{
+  if(!list.length) return;
+  $('#samples-wrap').hidden = false;
+  $('#samples').innerHTML = list.map(s => `
+    <button class="samp${s.synthetic ? ' verify' : ''}" data-f="${esc(s.file)}" title="${esc(s.label)} — ${s.n} annotated object(s), ${s.w}x${s.h}">
+      <img src="/samples/${esc(s.file)}" alt="${esc(s.label)} sample" loading="lazy">
+      <span>${esc(s.label)}</span>${s.detector==='debris' ? '<em class="needs">debris model</em>' : ''}
+    </button>`).join('');
+  document.querySelectorAll('.samp').forEach(b => b.onclick = async () => {
+    document.querySelectorAll('.samp').forEach(x=>x.classList.remove('sel'));
+    b.classList.add('sel');
+    const f = b.dataset.f;
+    const meta = list.find(x => x.file === f) || {};
+    selectedMeta = meta;
+    if (meta.geometry){
+      $('#alt').value = meta.geometry.towfish_altitude_m;
+      $('#rng').value = meta.geometry.slant_range_m;
+      $('#res').value = meta.geometry.across_track_resolution_m_per_px;
+    }
+    const blob = await (await fetch('/samples/'+f)).blob();
+    pick(new File([blob], f, {type: blob.type || 'image/jpeg'}));
+  });
+}).catch(()=>{});
+
+const num = id => { const v = $(id).value.trim(); return v === '' ? null : parseFloat(v); };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const f = (n,d=2) => n==null ? '—' : Number(n).toFixed(d);
+
+// ---- model status ----
+function setStat(id, text, state){
+  const el = $(id); if(!el) return;
+  el.textContent = text; el.className = state || '';
+}
+fetch('/api/v1/model-status').then(r=>r.json()).then(s=>{
+  const y = s.yolo && s.yolo.loaded, u = s.unet && s.unet.loaded;
+  setStat('#st-yolo', y ? 'ready' : 'no weights', y ? 'ok' : 'off');
+  setStat('#st-unet', u ? 'ready' : 'no weights', u ? 'ok' : 'off');
+  setStat('#st-dev', s.device === 'cuda' ? 'graphics card' : 'processor', 'ok');
+}).catch(()=>{
+  ['#st-yolo','#st-unet','#st-dev'].forEach(i=>setStat(i,'not reachable','err'));
+});
+
+// ---- run ----
+go.onclick = async () => {
+  if (!chosen) return;
+  go.disabled = true; go.textContent = 'Running…';
+  out.innerHTML = '<div class="empty">Running detection, shadow measurement and geometry…</div>';
+  out.scrollIntoView({block:'start', behavior:'smooth'});
+
+  const fd = new FormData();
+  fd.append('image', chosen);
+  const g = {};
+  const a = num('#alt'), r = num('#rng'), p = num('#res');
+  if (a!=null) g.towfish_altitude_m = a;
+  if (r!=null) g.slant_range_m = r;
+  if (p!=null) g.across_track_resolution_m_per_px = p;
+  if (Object.keys(g).length) fd.append('geometry', JSON.stringify(g));
+  fd.append('analyze_full_frame', 'true');
+
+  try{
+    const res = await fetch('/api/v1/inference', {method:'POST', body:fd});
+    const body = await res.json();
+    if (!res.ok){ out.innerHTML = err(body.detail || JSON.stringify(body)); return; }
+    render(body);
+  }catch(e){ out.innerHTML = err(e.message); }
+  finally{ go.disabled = false; go.textContent = 'Run inference'; }
+};
+
+const err = m => `<div class="panel"><div class="na"><b>Request failed</b>${esc(m)}</div></div>`;// ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// Everything on one screen, no scrolling.
+//
+// The chain of reasoning is permanently visible as a strip: every step,
+// its headline, and the value it produced. That is the argument, and it
+// never leaves the screen.
+//
+// Interaction only changes which step's EVIDENCE fills the viewer. Nothing
+// is hidden the way a tab hides it — the steps and their outputs are always
+// there; you are choosing what to look at closely.
+//
+// The answer sits in its own fixed place and never moves, so a viewer can
+// keep their eye on it while exploring how it was arrived at.
+// ---------------------------------------------------------------
+
+// ---------------------------------------------------------------
+// The results read as a chain of reasoning, not a grid of outputs.
+//
+// Each step states what it produced, shows the evidence for it, and hands
+// a named value to the next step. The connectors carry that value, so a
+// viewer can follow the argument from a sonar frame to a height in metres
+// without anyone narrating it.
+//
+// The last step is the claim; the step after it is what we refuse to claim.
+// ---------------------------------------------------------------
+function render(d){
+  const dets = d.detections || [];
+  const ff   = d.full_frame || {};
+  const p    = dets[0] || null;
+  const ht   = p ? (p.height || {})            : {};
+  const sg   = p ? (p.segmentation || {})      : {};
+  const scl  = p ? (p.shadow_classical || p.shadow || {}) : {};
+  const cc   = p ? (p.cross_check || {})       : {};
+
+  // A step: kicker, headline, evidence, and the value it passes on.
+  const step = (o) => `
+    <section class="step${o.climax ? ' climax' : ''}${o.refuse ? ' refuse' : ''}">
+      <div class="step-head">
+        <span class="kicker">${o.kicker}</span>
+        <h3>${o.title}</h3>
+        ${o.sub ? `<p class="sub">${o.sub}</p>` : ''}
+      </div>
+      ${o.body || ''}
+    </section>`;
+
+  const link = (text) => `<div class="link"><span>${text}</span></div>`;
+
+  let h = '';
+
+  // ---------- 1. the frame ----------
+  h += step({
+    kicker: 'The frame',
+    title: p ? `A ${esc(p.class_name)} in the frame`
+             : 'No targets in this frame',
+    sub: p ? `Found by the <b>${esc(p.detector||'detector')}</b> model, ${(p.confidence*100).toFixed(0)}% confident.
+              It gives a region to look at &mdash; nothing more. A box has no shape and no dimensions.`
+           : 'Not an error. The frame may genuinely contain none, or no detector is loaded.',
+    body: d.annotated_image_url
+      ? `<img class="ev-img" src="${esc(d.annotated_image_url)}" alt="Sonar frame with the detection marked">`
+      : ''
+  });
+
+  if (p){
+    // ---------- 2. segmentation ----------
+    let segBody = '';
+    if (sg.available){
+      const tot = (sg.highlight_area_px||0) + (sg.shadow_area_px||0);
+      const pct = v => tot ? Math.round((v/tot)*100) : 0;
+      if (sg.mask_png_url)
+        segBody += `<img class="ev-img narrow" src="${esc(sg.mask_png_url)}" alt="The region before and after classification">`;
+      segBody += `<div class="split">
+          <div><span class="sw" style="background:var(--highlight)"></span>
+            <b>Acoustic highlight</b>
+            <p>Sound bounced back off the object. ${pct(sg.highlight_area_px)}% of the classified pixels.</p></div>
+          <div><span class="sw" style="background:var(--shadow)"></span>
+            <b>Acoustic shadow</b>
+            <p>Where the object blocked the sound. ${pct(sg.shadow_area_px)}% &mdash; and the part that matters.</p></div>
+        </div>`;
+    } else {
+      segBody = `<p class="note">${esc(sg.reason||'')} The measurement below does not depend on it.</p>`;
+    }
+    h += link('the region &rarr;');
+    h += step({
+      kicker: 'First',
+      title: 'Which pixels are the object, and which are its shadow',
+      sub: 'This is the part a bounding box cannot do. The boundary between the two is the whole measurement.',
+      body: segBody
+    });
+
+    // ---------- 3. the shadow length ----------
+    let measBody = '';
+    if (scl.profile && scl.profile.values && scl.profile.values.length){
+      measBody += profileSVG(scl);
+      measBody += `<p class="note">Brightness along the range axis. The bright spike is the object;
+        the dip after it is the shadow. Its width is the measurement &mdash; read straight off the
+        image, with no model involved.</p>`;
+    } else if (scl.reason){
+      measBody += `<p class="note">${esc(scl.reason)}</p>`;
+    }
+    if (ht.available)
+      measBody += `<p class="yielded">Shadow length <b>${f(ht.shadow_length_m)} m</b></p>`;
+
+    h += link('a shadow &rarr;');
+    h += step({
+      kicker: 'Then',
+      title: 'How long is the shadow',
+      sub: 'A long shadow means a tall object. That relationship is geometry, and it is exact.',
+      body: measBody
+    });
+
+    // ---------- 4. the claim ----------
+    let claimBody;
+    if (ht.available){
+      claimBody = `<div class="answer">${f(ht.height_m)}<span>m</span></div>
+        <div class="chain">
+<span class="c">ground range</span>  G = &radic;(R&sup2; &minus; H&sup2;) = <span class="v">${f(ht.ground_range_m)}</span> m
+<span class="c">height</span>        h = H &times; Ls / (G + Ls) = <span class="r">${f(ht.height_m)} m</span></div>
+        <p class="note">H is the towfish altitude and R the slant range &mdash; both measured by the
+        sonar, not inferred. Assumes ${(ht.assumptions||['a locally flat seabed']).map(esc).join('; ')}.</p>`;
+    } else {
+      claimBody = `<div class="answer off">&mdash;</div>
+        <p class="note"><b>${esc(ht.reason||'Not computed.')}</b><br>
+        Height needs measured sonar geometry. We show what is missing instead of filling it with a default.</p>`;
+    }
+    h += link('a height &rarr;');
+    h += step({ kicker: 'Which gives', title: 'How tall the object stands off the seabed',
+                climax: true, body: claimBody });
+
+    // ---------- 5. checking ourselves ----------
+    if (cc.available){
+      const ok = cc.agrees;
+      h += step({
+        kicker: 'Checked against',
+        title: ok ? 'Two methods measured it independently, and agree'
+                  : 'Two methods measured it independently, and disagree',
+        sub: ok ? 'Confidence is high.'
+                : 'So this one is flagged for review rather than reported as if it were certain.',
+        body: `<div class="split compare">
+            <div><b>Read off the image</b><span>${f(cc.classical_length_px,0)} px</span></div>
+            <div><b>Read off the U&#8209;Net mask</b><span>${f(cc.unet_length_px,0)} px</span></div>
+          </div>
+          <p class="note">${(cc.relative_difference*100).toFixed(0)}% apart. We show both rather than
+          averaging them &mdash; an average would hide exactly the disagreement worth knowing about.</p>`
+      });
+    }
+  }
+
+  // ---------- 6. what we do not claim ----------
+  h += step({
+    kicker: 'What we do not claim',
+    refuse: true,
+    title: 'How deep the water is, and where this is on a chart',
+    sub: 'Depth comes from bathymetry or an echosounder. Position comes from GPS and INS. ' +
+         'Neither can be recovered from a sonar image, so neither is reported.',
+  });
+
+  // ---------- verification, when the answer is known ----------
+  if (ff.height && ff.height.available && selectedMeta.true_height_m != null){
+    const err = Math.abs(ff.height.height_m - selectedMeta.true_height_m) / selectedMeta.true_height_m * 100;
+    h = step({
+      kicker: 'Measured against a known answer',
+      title: 'A target of known height, measured blind',
+      sub: 'The shadow was generated from a chosen height. The pipeline was not told that height &mdash; it measured the shadow and worked backwards.',
+      climax: true,
+      body: `<div class="verify-pair">
+          <div><b>True</b><span>${f(selectedMeta.true_height_m)} m</span></div>
+          <div class="got"><b>Recovered</b><span>${f(ff.height.height_m)} m</span></div>
+          <div><b>Error</b><span>${err.toFixed(1)}%</span></div>
+        </div>`
+    }) + h;
+  }
+
+  const t = d.timings_ms || {};
+  h += `<p class="timing">Processed in ${Math.round(t.total||0)} ms &mdash; ` +
+       Object.entries(t).filter(([k])=>k!=='total')
+         .map(([k,v])=>`${esc(k)} ${Math.round(v)}`).join(' &middot; ') + ' ms</p>';
+
+  out.innerHTML = h;
+}
+
+
+
+
+// ---------------------------------------------------------------
+// Interactive geometry simulator.
+// Scene units: metres. Towfish altitude and target ground range are
+// dragged; shadow length follows from Ls = h*G/(H-h), the inverse of
+// the relation the pipeline uses to recover h from a measured Ls.
+// ---------------------------------------------------------------
+(function(){
+  const svg = $('#sim'); if(!svg) return;
+
+  // Geometry canvas. The water column is compressed deliberately — this is a
+  // relationship diagram, not a scale drawing, and the seabed is where the
+  // measurement happens, so that is what gets the room.
+  const W = 880, HGT = 312;
+  const SEA = 20, BED = 196;          // y of sea surface / seabed
+  const X0 = 96, MPP = 8;             // nadir x, px per metre
+  let H = 12.0;                       // towfish altitude, m
+  let G = 42.0;                       // target ground range, m
+  let h = 1.6;                        // object height, m
+
+  const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+  const mx = m => X0 + m * MPP;
+  const fy = () => BED - H * MPP;
+
+  const MAX_H_FRACTION = 0.45;   // object height as a fraction of towfish altitude
+
+  function geom(){
+    const R  = Math.sqrt(G*G + H*H);
+    const Ls = (h*G) / (H - h);
+    return {R, Ls};
+  }
+
+  // Keep the object well clear of the towfish altitude. As h approaches H the
+  // shadow runs to infinity — true, but it renders as a meaningless number and
+  // a bar off the end of the diagram.
+  function clampObject(){
+    const hi = Math.max(0.2, H * MAX_H_FRACTION);
+    h = clamp(h, 0.2, hi);
+    const sl = $('#simH');
+    if (sl){
+      sl.max = hi.toFixed(1);
+      sl.value = h.toFixed(1);
+      $('#simHv').textContent = h.toFixed(1) + ' m';
+    }
+  }
+
+  function draw(){
+    const {R, Ls} = geom();
+    const tx = mx(G), ty = fy(), sx = mx(G + Ls);
+    const objTop = BED - h * MPP;
+
+    svg.innerHTML = `
+      <defs>
+        <marker id="tick" viewBox="0 0 8 8" refX="4" refY="4" markerWidth="8" markerHeight="8">
+          <line x1="4" y1="1" x2="4" y2="7" stroke="currentColor" stroke-width="1.2"/>
+        </marker>
+      </defs>
+
+      <line x1="24" y1="${SEA}" x2="${W-24}" y2="${SEA}" stroke="currentColor" opacity=".22" stroke-dasharray="6 5"/>
+      <text x="24" y="${SEA-8}" class="lbl">Sea surface</text>
+
+      <!-- the shadow: the subject of the whole diagram, so it reads first -->
+      <rect x="${tx}" y="${BED}" width="${Math.max(2, sx-tx)}" height="13"
+            fill="var(--shadow)" opacity=".9"/>
+      <line x1="${tx}" y1="${BED+26}" x2="${sx}" y2="${BED+26}" stroke="var(--shadow)"
+            stroke-width="1.2" marker-start="url(#tick)" marker-end="url(#tick)" color="var(--shadow)"/>
+      <text x="${Math.max((tx+sx)/2, tx+44)}" y="${BED+42}" class="dim-l" fill="var(--shadow)">shadow &mdash; ${Ls.toFixed(2)} m</text>
+
+      <line x1="24" y1="${BED}" x2="${W-24}" y2="${BED}" stroke="currentColor" stroke-width="1.6"/>
+      <text x="24" y="${BED+18}" class="lbl">Seabed</text>
+
+      <!-- rays: the solid one hits the target, the dashed one grazes its top -->
+      <line x1="${X0+4}" y1="${ty}" x2="${tx}" y2="${BED}" stroke="var(--highlight)" stroke-width="1.5"/>
+      <line x1="${X0+4}" y1="${ty}" x2="${sx}" y2="${BED}" stroke="var(--shadow)" stroke-width="1.3" stroke-dasharray="5 4"/>
+      ${(() => {
+        const len = Math.hypot(sx - X0, BED - ty);
+        if (len < 260) return '';            // no room for a caption on a short ray
+        // Sit the caption between the towfish and the target, well above the
+        // ray, so it clears both handles at every position they can take.
+        const lx = X0 + (sx - X0) * 0.34, ly = ty + (BED - ty) * 0.34 - 16;
+        // When the target sits close in, that point lands on its handle.
+        if (Math.abs(lx - tx) < 62) return '';
+        const ang = Math.atan2(BED - ty, sx - X0) * 180 / Math.PI;
+        return `<text x="${lx}" y="${ly}" class="ray-l" fill="var(--shadow)"
+                  transform="rotate(${ang} ${lx} ${ly})">grazing ray</text>`;
+      })()}
+
+      <!-- object, with its height marked on the diagram -->
+      <rect x="${tx-4}" y="${objTop}" width="9" height="${BED-objTop}" fill="var(--highlight)"/>
+      <circle id="tgt" cx="${tx}" cy="${objTop-13}" r="11" fill="var(--highlight)" opacity=".92" style="cursor:ew-resize"/>
+      <circle cx="${tx}" cy="${objTop-13}" r="34" fill="transparent" style="cursor:ew-resize"/>
+      <circle cx="${tx}" cy="${objTop-13}" r="15" fill="none" stroke="var(--highlight)"
+              stroke-width="1" stroke-dasharray="3 3" opacity=".45" pointer-events="none"/>
+      ${hinted ? '' : `<text x="${tx}" y="${objTop-34}" text-anchor="middle" class="hint-l">drag sideways</text>`}
+      <line x1="${tx-14}" y1="${objTop}" x2="${tx-14}" y2="${BED}" stroke="var(--highlight)"
+            stroke-width="1.1" marker-start="url(#tick)" marker-end="url(#tick)" color="var(--highlight)"/>
+
+      <!-- towfish -->
+      <line x1="${X0}" y1="${ty+9}" x2="${X0}" y2="${BED}" stroke="currentColor" stroke-dasharray="4 3" opacity=".5"/>
+      <line x1="${X0-18}" y1="${ty}" x2="${X0-18}" y2="${BED}" stroke="currentColor" opacity=".5"
+            stroke-width="1.1" marker-start="url(#tick)" marker-end="url(#tick)"/>
+      <text x="${X0-26}" y="${(ty+BED)/2-5}" text-anchor="end" class="dim-w">towfish</text>
+      <text x="${X0-26}" y="${(ty+BED)/2+12}" text-anchor="end" class="dim-w">altitude</text>
+      <polygon points="${X0-12},${ty-6} ${X0+14},${ty} ${X0-12},${ty+6}" fill="currentColor"/>
+      <circle id="fish" cx="${X0}" cy="${ty}" r="14" fill="none" stroke="var(--text)"
+              stroke-width="1.4" stroke-dasharray="3 3" opacity=".6" style="cursor:ns-resize"/>
+      <circle cx="${X0}" cy="${ty}" r="34" fill="transparent" style="cursor:ns-resize"/>
+      <text x="${X0}" y="${ty-20}" text-anchor="middle" class="handle-l">towfish</text>
+      ${hinted ? '' : `<text x="${X0+30}" y="${ty+5}" class="hint-l">drag up / down</text>`}
+
+      <!-- ground range -->
+      <line x1="${X0}" y1="${BED+74}" x2="${tx}" y2="${BED+74}" stroke="currentColor" opacity=".45"
+            stroke-width="1" marker-start="url(#tick)" marker-end="url(#tick)"/>
+      <text x="${(X0+tx)/2}" y="${BED+69}" class="dim-l" opacity=".95">distance across the seabed &mdash; ${G.toFixed(1)} m</text>`;
+
+    wire();
+
+    $('#simOut').innerHTML = `
+      <p class="sim-say">
+        A towfish flying <b>${H.toFixed(1)} m</b> above the seabed, with the object
+        <b>${G.toFixed(1)} m</b> out across the bottom from it.
+        An object <b>${h.toFixed(2)} m</b> tall standing there casts a shadow
+        <b class="key">${Ls.toFixed(2)} m</b> long.
+      </p>
+      <p class="sim-say quiet">
+        The sonar itself measures the straight-line distance to the object &mdash;
+        <b>${R.toFixed(2)} m</b> &mdash; and its own height above the bottom. Everything else
+        follows from those two.
+      </p>`;
+  }
+
+  function pt(e){
+    const r = svg.getBoundingClientRect();
+    const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    const cy = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+    return { x: cx * (W / r.width), y: cy * (HGT / r.height) };
+  }
+
+  let drag = null, hinted = false;
+
+  function wire(){ /* handled by the svg-level pointerdown below */ }
+
+  svg.addEventListener('pointerdown', e => {
+    const p = pt(e);
+    const fx = X0,  fyy = fy();
+    const gx = mx(G), gy = (BED - h * MPP) - 13;
+    const dFish = Math.hypot(p.x - fx, p.y - fyy);
+    const dTgt  = Math.hypot(p.x - gx, p.y - gy);
+    // Take the nearer handle if the pointer landed anywhere near either.
+    if (Math.min(dFish, dTgt) > 90) return;
+    drag = dFish <= dTgt ? 'fish' : 'tgt';
+    svg.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  window.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const p = pt(e);
+    hinted = true;
+    if (drag === 'fish'){
+      // Never let the towfish drop to or below the object: h < H is required
+      // for the geometry to have a solution at all.
+      H = clamp((BED - p.y) / MPP, 3, 18);
+      clampObject();
+    } else {
+      // Keep the shadow on screen; past this the diagram stops being readable.
+      G = clamp((p.x - X0) / MPP, 8, 62);
+    }
+    draw();
+  });
+  const endDrag = e => {
+    if (drag && e.pointerId != null && svg.hasPointerCapture?.(e.pointerId))
+      svg.releasePointerCapture(e.pointerId);
+    drag = null;
+  };
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+
+  $('#simH').addEventListener('input', e => {
+    h = clamp(parseFloat(e.target.value), 0.2, H * MAX_H_FRACTION);
+    $('#simHv').textContent = h.toFixed(1) + ' m';
+    draw();
+  });
+  $('#simApply').addEventListener('click', () => {
+    const {R} = geom();
+    $('#alt').value = H.toFixed(1);
+    $('#rng').value = R.toFixed(1);
+    if (!$('#res').value) $('#res').value = '0.05';
+    $('#alt').scrollIntoView({ block:'center', behavior:'smooth' });
+  });
+
+  clampObject();
+  draw();
+})();
+
+// Draw the intensity profile as an SVG, with threshold line and shadow span.
+function profileSVG(sh){
+  const v = sh.profile.values, n = v.length;
+  const W = 720, H = 190, PAD = 26;
+  const min = Math.min(...v), max = Math.max(...v);
+  const span = (max - min) || 1;
+  const x = i => PAD + (i/(n-1))*(W-2*PAD);
+  const y = t => H-PAD - ((t-min)/span)*(H-2*PAD);
+
+  const pts = v.map((t,i)=>`${x(i).toFixed(1)},${y(t).toFixed(1)}`).join(' ');
+  const thrY = y(sh.profile.threshold).toFixed(1);
+
+  let shade = '';
+  if (sh.shadow_start_px!=null && sh.shadow_end_px!=null){
+    const x0 = x(sh.shadow_start_px), x1 = x(sh.shadow_end_px);
+    shade = `<rect x="${x0.toFixed(1)}" y="${PAD}" width="${Math.max(1,x1-x0).toFixed(1)}"
+             height="${H-2*PAD}" fill="var(--shadow)" opacity="0.20"></rect>
+             <text x="${((x0+x1)/2).toFixed(1)}" y="${H-8}" text-anchor="middle"
+             font-family="var(--m)" font-size="11" fill="var(--shadow)" font-weight="700">Ls = ${sh.shadow_length_px} px</text>`;
+  }
+  let peak = '';
+  if (sh.profile.peak_index!=null){
+    const px = x(sh.profile.peak_index);
+    peak = `<line x1="${px.toFixed(1)}" y1="${PAD}" x2="${px.toFixed(1)}" y2="${H-PAD}"
+            stroke="var(--highlight)" stroke-width="1.5" stroke-dasharray="3 3"></line>
+            <text x="${px.toFixed(1)}" y="${PAD-8}" text-anchor="middle" font-family="var(--m)"
+            font-size="10.5" fill="var(--highlight)" font-weight="700">highlight</text>`;
+  }
+
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;background:var(--ground);border-radius:3px;border:1px solid var(--line)" role="img" aria-label="Intensity profile along the range axis showing the highlight peak and the shadow span used to measure shadow length.">
+    ${shade}
+    <line x1="${PAD}" y1="${thrY}" x2="${W-PAD}" y2="${thrY}" stroke="var(--critical)"
+          stroke-width="1.2" stroke-dasharray="5 4"></line>
+    <text x="${W-PAD}" y="${(+thrY-6)}" text-anchor="end" font-family="var(--m)" font-size="10"
+          fill="var(--critical)">threshold</text>
+    ${peak}
+    <polyline points="${pts}" fill="none" stroke="var(--text)" stroke-width="1.6"
+              stroke-linejoin="round"></polyline>
+  </svg>`;
+}
+</script>
+</body>
+</html>

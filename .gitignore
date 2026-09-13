@@ -1,0 +1,28 @@
+# --- environment ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# --- secrets / local config ---
+.env
+
+# --- model weights (large binaries; see README for how to obtain them) ---
+weights/
+backend/weights/
+*.pt
+*.pth
+*.onnx
+
+# --- datasets (large; regenerate with the scripts in training/) ---
+data/
+
+# --- training and inference outputs ---
+runs/
+backend/outputs/
+backend/uploads/
+training/*_log*.txt
+
+# --- generated preview/report files ---
+brief.html

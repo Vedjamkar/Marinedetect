@@ -1,0 +1,11 @@
+# Ultralytics dataset config for the SCTD seabed-object detector
+# (ship / aircraft / human), converted from Pascal VOC by voc_to_yolo.py.
+path: D:/Marinedetect/data/yolo
+train: train/images
+val: val/images
+
+nc: 3
+names:
+  0: ship
+  1: aircraft
+  2: human

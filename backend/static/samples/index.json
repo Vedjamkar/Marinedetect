@@ -1,0 +1,112 @@
+[
+ {
+  "file": "verification_target.png",
+  "label": "verify",
+  "n": 1,
+  "w": 520,
+  "h": 460,
+  "synthetic": true,
+  "geometry": {
+   "towfish_altitude_m": 12.0,
+   "slant_range_m": 40.0,
+   "across_track_resolution_m_per_px": 0.05
+  },
+  "true_height_m": 1.6,
+  "planted_shadow_px": 117
+ },
+ {
+  "file": "000002.jpg",
+  "label": "aircraft",
+  "n": 1,
+  "w": 415,
+  "h": 385
+ },
+ {
+  "file": "000006.jpg",
+  "label": "aircraft",
+  "n": 1,
+  "w": 300,
+  "h": 188
+ },
+ {
+  "file": "000007.jpg",
+  "label": "aircraft",
+  "n": 1,
+  "w": 743,
+  "h": 419
+ },
+ {
+  "file": "000091.jpg",
+  "label": "human",
+  "n": 1,
+  "w": 460,
+  "h": 351
+ },
+ {
+  "file": "000092.jpg",
+  "label": "human",
+  "n": 1,
+  "w": 330,
+  "h": 187
+ },
+ {
+  "file": "000093.jpg",
+  "label": "human",
+  "n": 1,
+  "w": 207,
+  "h": 215
+ },
+ {
+  "file": "000135.jpg",
+  "label": "ship",
+  "n": 1,
+  "w": 744,
+  "h": 497
+ },
+ {
+  "file": "000136.jpg",
+  "label": "ship",
+  "n": 1,
+  "w": 860,
+  "h": 460
+ },
+ {
+  "file": "000138.jpg",
+  "label": "ship",
+  "n": 1,
+  "w": 950,
+  "h": 360
+ },
+ {
+  "file": "debris_1.jpg",
+  "label": "crab pot",
+  "n": 2,
+  "w": 640,
+  "h": 640,
+  "detector": "debris"
+ },
+ {
+  "file": "debris_2.jpg",
+  "label": "crab pot",
+  "n": 2,
+  "w": 640,
+  "h": 640,
+  "detector": "debris"
+ },
+ {
+  "file": "debris_3.jpg",
+  "label": "crab pot",
+  "n": 1,
+  "w": 640,
+  "h": 640,
+  "detector": "debris"
+ },
+ {
+  "file": "debris_4.jpg",
+  "label": "crab pot",
+  "n": 1,
+  "w": 640,
+  "h": 640,
+  "detector": "debris"
+ }
+]

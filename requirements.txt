@@ -1,0 +1,39 @@
+# Marinedetect — runtime dependencies
+#
+# Versions are pinned to what this project was actually built and tested against.
+#
+# TORCH IS NOT LISTED HERE ON PURPOSE.
+# The right torch build depends on your machine's CUDA (or lack of it), so
+# installing it from PyPI here would silently give some people a CPU-only build
+# and others a mismatched CUDA one. Install it first, separately:
+#
+#   GPU (CUDA 12.4, what this was developed on):
+#     pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+#
+#   CPU only (inference and the shadow/height pipeline work fine; training does not):
+#     pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cpu
+#
+# Then:  pip install -r requirements.txt
+#
+# See README.md for the full setup, or run scripts/setup.py which does all of this.
+
+# --- API ---
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# --- imaging / inference ---
+ultralytics==8.4.137
+opencv-python==5.0.0.93
+numpy==2.4.6
+pillow==12.3.0
+matplotlib==3.11.1
+
+# --- dataset fetching (only needed to re-download training data) ---
+huggingface-hub==1.29.0
+
+# --- tests ---
+pytest==9.1.1
+httpx==0.28.1

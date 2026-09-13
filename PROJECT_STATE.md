@@ -1,0 +1,278 @@
+# PROJECT STATE
+
+Snapshot for resuming work — from another machine, another session, or another agentic tool.
+Last updated: 2026-09-02, handover build.
+
+**Read this first, then `PLAN.md` for architecture and `BACKEND.md` / `TRAINING.md` for the build specs.**
+
+---
+
+## 1. What this project is
+
+Automated detection of marine debris and seabed anomalies in **side-scan sonar**, for SIH Round 2.
+
+The defensible core, and the answer to the Round 1 challenge on depth:
+
+| Layer | Does | Does not |
+|---|---|---|
+| **Perception** (YOLO + U-Net) | class, pixel extents of highlight and shadow | anything in metres |
+| **Acoustic geometry** | slant range, ground range, **object height from shadow length** | seabed depth |
+| **Spatial reference** (GPS/INS, bathymetry) | lat/lon, seabed depth | — not implemented |
+
+The formulas, verified and implemented:
+
+```
+R  = c*t/2                     slant range from two-way travel time
+G  = sqrt(R^2 - H^2)           ground range  (H = towfish altitude, MEASURED input)
+h  = H*Ls/(G + Ls)             object height from ground-range shadow length Ls
+```
+
+Common error to avoid: solving the second equation for `H`. `H` comes from the altimeter; the
+equation yields ground range. Also: **seabed depth is never derived from imagery.**
+
+---
+
+## 2. Environment — verified, do not re-derive
+
+| Item | Value |
+|---|---|
+| Project root | `D:\Marinedetect` |
+| venv | `D:\Marinedetect\.venv` (Python 3.11.15, made with `uv`) |
+| **venv python** | `D:/Marinedetect/.venv/Scripts/python.exe` — always use this explicit path |
+| `python` on PATH | **TRAP** — a Hermes agent venv with no pip. Never use it. |
+| GPU | GTX 1650 Ti, **4 GB VRAM**, CUDA works (`torch 2.6.0+cu124`) |
+| Installed | torch, torchvision, ultralytics, opencv-python, fastapi, uvicorn, pydantic-settings, pillow, matplotlib, huggingface_hub |
+| Disk | D: ~71 GB free (fine). C: ~27 GB free (tight, unused by this project) |
+
+Install more packages with:
+```bash
+VIRTUAL_ENV=/d/Marinedetect/.venv uv pip install --python .venv/Scripts/python.exe <pkg>
+```
+
+Windows gotcha already hit and fixed: Ultralytics `workers=8` silently kills training on Windows.
+`training/train.py` pins `workers=0`. Do not raise it.
+
+---
+
+## 3. Current status
+
+### Handover note
+This is the build handed to the tech team. `QUICKSTART.md` is the five-minute setup;
+`README.md` is the full reference. Model weights and datasets are **not** included — see
+"Getting weights" in the README. The service is designed to run without them.
+
+### Works now
+- **Backend**: FastAPI at `backend/`. **63 tests pass** (`pytest backend/tests -q`), hermetic —
+  they pass whether or not weights are on disk, because the fixtures point the weight paths at a
+  nonexistent directory.
+- **Setup**: `python scripts/setup.py` creates the venv, detects GPU vs CPU, installs the matching
+  torch build, then verifies and runs the tests.
+- **Demo UI**: `backend/static/index.html`, served at `/`. Sample gallery, geometry form,
+  live intensity-profile plot, interactive drag simulator.
+- **Detection**: YOLOv8n trained on SCTD. Classes `ship / aircraft / human`. Confidence threshold
+  raised to **0.40** (from 0.25) — below that is mostly noise on a 286-image training set, and a
+  spurious low-confidence box beside a real one reads badly to a human.
+- **Shadow + height**: classical intensity-profile method. **No trained model needed.**
+- **Verified physics**: synthetic target planted at 1.600 m → pipeline recovers **1.61 m (0.4% error)**.
+
+### Detector accuracy — the diagnosis, so nobody re-derives it
+Crab-pot scores lower than SCTD because it is a **small-object problem**, not a training problem:
+
+| Dataset | Median box side | COCO "small" | mAP@0.5 |
+|---|---|---|---|
+| SCTD (wrecks, aircraft) | 271 px | 0% | 0.794 |
+| Crab-pot (fishing gear) | 44 px | 33% | 0.465 |
+
+The tell is mAP@0.5 0.465 against mAP@0.5:0.95 0.157 — found but poorly localized. At a 44 px
+median object, YOLOv8's P5 head (stride 32) spans ~1.4 grid cells and contributes nothing.
+`training/train_crabpot_p2.py` adds a stride-4 head; it was mid-run at handover (epoch 5,
+mAP@0.5 0.242 and climbing — do not read a short run as a plateau). Full reasoning in README.
+
+### Training (SCTD) — still running at snapshot time
+Epoch 57/150. Latest: **mAP@0.5 = 0.745, P = 0.882, R = 0.612.**
+Stable in the 0.71-0.73 band since epoch 38, so this is a plateau, not a noise spike.
+
+**Do not quote a single best epoch.** The val split is 71 images and metrics bounce by ±0.1.
+Honest phrasing: *"mAP@0.5 around 0.72 on a 71-image validation split, which is small enough that
+the figure is noisy."*
+
+### U-Net — now trained, but weak
+Weights exist at `backend/weights/unet/unet.pth` (1.9 MB, 3-class, loads cleanly).
+
+**Measured: foreground mean IoU 0.273 — highlight 0.328, shadow 0.196.**
+
+Trained for 45 epochs on CPU over **269 train / 68 val weakly-supervised masks**
+generated by `training/make_masks.py`, which thresholds intensity inside and below each
+annotated box. **These are not human annotations.** Report the model as weakly supervised.
+
+Consequence, and it matters: the classical profile method recovers a planted synthetic
+height to 0.4%, while the U-Net's shadow IoU is 0.196. `fusion_service` therefore uses
+**classical as the primary height source and U-Net only as a cross-check**, falling back to
+U-Net only when classical finds nothing. That ordering is a measurement, not a preference —
+revisit it once the U-Net is trained on real annotations.
+
+In practice the two methods **currently disagree on most detections** (relative difference
+0.46 and 1.54 on samples tested, against a 0.25 tolerance). The cross-check is working as
+designed — it is flagging that the U-Net masks are not yet trustworthy.
+
+### CRITICAL BUG FIXED: RGB/BGR channel order at inference
+
+`yolo_service.predict` was passing **RGB** arrays to Ultralytics, which follows the OpenCV
+convention and reads an ndarray `source` as **BGR**. Red and blue were silently swapped on
+every API detection.
+
+Nothing raised, nothing logged, and the endpoint kept returning 200 with an empty detections
+list — so it read as "the model just isn't very good". **Training was unaffected** (Ultralytics
+loads files itself); this was inference-only, which is exactly where the low accuracy showed.
+
+Measured recovery on the nine demo samples:
+
+| Sample | Before | After |
+|---|---|---|
+| 000002 aircraft | 0.83 | 0.96 |
+| 000006 aircraft | **missed** | 0.93 |
+| 000091 human | 0.85 | 0.94 |
+| 000093 human | 0.38 | 0.87 |
+| 000136 ship | 0.70 | 0.90 |
+
+7/9 detected became 8/9, with confidence up sharply on most. Guarded by
+`backend/tests/test_yolo_channel_order.py` so it cannot return unnoticed.
+
+**Lesson worth carrying: an empty detections list is not evidence of a weak model.** Check the
+plumbing before tuning the training.
+
+### Full-frame analysis is a coarse tool, by construction
+It averages a 1-D intensity profile across the entire image width, so a shadow occupying a
+small part of a wide frame is averaged away. It works on the synthetic verification sample
+(where the target spans most of the frame) and is a genuine model-free proof of the physics,
+but per-detection ROI analysis is the reliable path. The UI now says so on the panel.
+
+### Mask-source finding worth keeping
+The first attempt generated masks from crab-pot data and produced unusable noise. Diagnosis:
+median crab-pot box is **20x20 px** (0.1% of a 640x640 tile) and target-vs-seabed contrast is
+**median +0.43 sigma, p25 -0.03 sigma** — a quarter of crab pots are not brighter than the
+seabed at all. Small low-contrast targets in turbid shallow water do not cast resolvable
+shadows. Switching the mask source to SCTD (wrecks, aircraft — large objects with real
+shadows) dropped the rejection rate from 43% to 4%.
+
+**This is a genuine limitation of the shadow-height method, not just of our implementation:
+it needs substantial targets. Small debris may cast no measurable shadow.**
+
+### Not built / not working
+- Geometry module (slant-range correction from real metadata) — formulas verified, not wired to real
+  per-ping data because rasters carry none.
+- No lat/lon, no depth, no bathymetry. Deliberate.
+- Crab-pot model not trained (see below).
+
+---
+
+## 4. Data
+
+| Dataset | Location | State |
+|---|---|---|
+| SCTD | `data/raw/SCTD/SCTD/` | Complete. 357 images, 363 objects, VOC. Classes ship/aircraft/human. |
+| SCTD → YOLO | `data/yolo/{train,val}/` | 286 train / 71 val, stratified, seed 42 |
+| Crab-pot SSS | `data/raw/crabpot/` | **9561 files — download may still be in progress (target ~6,680 + cache)** |
+
+**Crab-pot is the important one**: ~6,700 side-scan images of derelict crab pots (ghost fishing gear)
+from real surveys. Right sonar, right problem. Gated on Hugging Face — the account `vedforeal` has
+accepted terms and `hf auth` is already configured on this machine.
+
+Datasets NOT usable for detection, despite being commonly cited:
+- **SeabedObjects-KLSG** — image-level classification only, no boxes.
+- **NKSID** — forward-looking sonar, not side-scan.
+
+Attribution obligations are in `CREDITS.md`. Both crab-pot dataset and its models are CC-BY-SA-4.0,
+which requires attribution and share-alike on derivatives.
+
+---
+
+## 5. How to run
+
+```bash
+# Backend + demo UI  (from D:\Marinedetect)
+D:/Marinedetect/.venv/Scripts/python.exe -m uvicorn backend.main:app --app-dir D:/Marinedetect --host 127.0.0.1 --port 8000
+# then open http://127.0.0.1:8000/
+```
+
+```bash
+# Tests
+D:/Marinedetect/.venv/Scripts/python.exe -m pytest backend/tests -q
+```
+
+```bash
+# Training (already running; relaunch only if it died)
+D:/Marinedetect/.venv/Scripts/python.exe training/train.py > training/train_log2.txt 2>&1
+```
+
+### Two known operational traps
+1. **Model loading is lazy-load-once.** Copying weights in while the server is running has no effect —
+   restart the server after changing `backend/weights/`. A startup warm-up in `main.py`'s lifespan
+   absorbs the ~2.7 s first-load cost so the first demo request is fast (~77 ms).
+2. **Two tests fail when real weights are present** (`test_inference_503_when_yolo_unavailable`,
+   `test_model_status_with_zero_weights`). They assert the zero-weights path and don't isolate from
+   the real weights dir. Not a code bug. To get a clean run, temporarily move
+   `backend/weights/yolo/best.pt` aside. **Worth fixing properly** by pointing those tests at a tmp dir.
+
+---
+
+## 6. Demo script (what to actually show)
+
+1. Open `http://127.0.0.1:8000/`. Status badge honestly reads *"detector only · shadow = classical"*.
+2. Click the **VERIFY** sample (first tile). Geometry auto-fills: H=12 m, R=40 m, 0.05 m/px.
+3. **Run inference.** Shows:
+   - annotated image + per-stage timings
+   - live intensity profile with the highlight peak marked and shadow span shaded
+   - the height chain: `Ls → G = sqrt(R²−H²) → h = H·Ls/(G+Ls)`
+   - **planted 1.60 m vs recovered 1.61 m, error 0.4%**
+4. Scroll to **Interactive geometry**. Drag the towfish up/down and the target along the seabed;
+   the shadow length and slant range recompute live. Raising the towfish shortens the shadow —
+   this is the relation the pipeline inverts.
+5. Click a **ship/human** sample to show real sonar detection.
+
+**Honesty points to make, not hide:**
+- Fields we cannot compute show *why*, not a blank or a fake number.
+- The height on real SCTD chips is computed from geometry values **typed into the form** — those
+  images carry no metadata. Only the synthetic verification sample has known ground truth.
+- U-Net reports unavailable because it has no weights. Say so.
+
+---
+
+## 7. Next actions, in priority order
+
+1. **Annotate highlight/shadow masks** (~150 ROI crops). Unblocks U-Net. Everything else waits on it.
+   Bootstrap with Otsu inside padded boxes, then hand-refine.
+2. **Train on crab-pot data** once download completes. 6,674 images at 512 px, batch 8, ~25 epochs
+   (~2 h). More data needs fewer epochs — 25 epochs here is more signal than 150 on SCTD.
+3. Fix the two weights-dependent tests to use a tmp weights dir.
+4. Wire real per-ping metadata (XTF via `pyxtf`) into the geometry interface, which already exists.
+
+---
+
+## 8. Key files
+
+```
+PLAN.md            architecture, physics corrections, design decisions and why
+BACKEND.md         backend build spec (what the backend agent followed)
+TRAINING.md        training spec, env traps, honesty constraints
+CREDITS.md         third-party data/model attribution (CC-BY-SA obligations)
+brief.html         the judge-facing technical brief (also published as an Artifact)
+backend/           FastAPI service — api/, services/, schemas/, ml/, utils/, tests/, static/
+  services/shadow_service.py    THE key component: classical shadow + height, no model needed
+  services/fusion_service.py    binds YOLO -> padded ROI -> classical + U-Net -> cross-check
+  static/index.html             demo UI
+training/          voc_to_yolo.py, train.py, data.yaml
+runs/sctd_yolov8n/ training output, results.csv, weights/best.pt
+```
+
+---
+
+## 9. Standing constraints — these are the point of the project
+
+1. **Never populate a field with a placeholder.** Missing input → `available: false` + a `reason`
+   naming exactly what is absent.
+2. **Every measurement names its method** (`classical_profile` vs `unet`). Never label a classical
+   measurement as a network output.
+3. **No blended confidence scores.** Detection confidence and segmentation metrics stay separate.
+4. **No fabricated metrics.** Unmeasured means "not evaluated yet".
+5. **Never claim depth from imagery.** That was the Round 1 finding.

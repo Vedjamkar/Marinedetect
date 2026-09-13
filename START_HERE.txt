@@ -1,0 +1,88 @@
+MARINEDETECT — side-scan sonar detection and shadow-geometry measurement
+========================================================================
+
+WHAT THIS IS
+  Finds objects in side-scan sonar imagery and measures how tall they stand off
+  the seabed, using the length of their acoustic shadow.
+
+  It does NOT measure water depth. That needs bathymetry or an echosounder, and
+  no amount of image processing substitutes for it. The interface says so
+  explicitly rather than filling the field with a plausible number.
+
+
+TO RUN IT
+  1.  Install Python 3.10 or newer (3.11 recommended) from python.org
+  2.  Open a terminal in this folder
+  3.  python scripts/setup.py
+  4.  Windows:      .venv\Scripts\activate
+      Mac / Linux:  source .venv/bin/activate
+  5.  python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+  6.  Open http://127.0.0.1:8000/
+
+  Step 3 does everything: creates an isolated environment, detects whether you
+  have an NVIDIA GPU, installs the matching PyTorch build, then verifies the
+  install and runs the tests. Allow 5-15 minutes, mostly downloading PyTorch.
+
+
+ONCE IT IS OPEN
+  Click a thumbnail under "Sample images" — the one marked "verify" is the best
+  starting point — then click "Run inference".
+
+  On that sample you should see:
+
+      true height       1.60 m
+      recovered         1.61 m
+      error             0.4%
+
+  That is a synthetic target with a shadow of known size. The system measured
+  the shadow and worked back to the height without being told the answer.
+
+
+TWO DETECTORS ARE INCLUDED
+  backend/weights/yolo/best.pt            (loaded by default)
+      Seabed objects - ship, aircraft, human. Trained on the SCTD sonar set.
+      mAP@0.5 = 0.794.
+
+  backend/weights/yolo/debris_crabpot.pt
+      MARINE DEBRIS - derelict crab pots, i.e. ghost fishing gear. Trained on
+      the crab-pot side-scan set. mAP@0.5 = 0.465, and that figure comes from a
+      PARTIAL run: training was stopped at epoch 12 of 25 and was still
+      improving. Treat it as a working baseline, not a finished model.
+
+  BOTH RUN AUTOMATICALLY. Every frame goes through both detectors and each
+  detection is labelled with the model that found it, on screen and in the
+  annotated image. There is nothing to switch and no restart needed.
+
+  Why debris scores lower: crab pots are small (median box 44 px against 271 px
+  for SCTD wrecks), and a third of them are "small" by COCO's definition. It is
+  a small-object detection problem. README.md has the full diagnosis and the
+  fixes, including the P2-head configuration that was training at handover.
+
+  IMPORTANT: the debris model is derived from a CC-BY-SA-4.0 dataset, so it
+  carries attribution AND share-alike obligations. Read CREDITS.md before
+  redistributing it or publishing results from it.
+
+  The service also runs perfectly well WITHOUT any weights: the API responds,
+  and the shadow measurement and height calculation still work, because they use
+  no neural network at all. You simply get no detections.
+
+
+THINGS THAT LOOK BROKEN BUT ARE NOT
+  - Grey panels saying "not computed". Correct. The system reports what input
+    is missing rather than inventing a value.
+  - Two shadow measurements disagreeing. Deliberate. Two independent methods
+    measure the same shadow; when they diverge we show both rather than
+    averaging them into one confident-looking wrong number.
+
+
+DOCUMENTATION, IN THE ORDER YOU WANT IT
+  DEMO_BRIEFING.md   READ THIS BEFORE PRESENTING - tech stack, how the demo
+                     works end to end, the running order, and answers to the
+                     questions you will be asked
+  QUICKSTART.md      five-minute setup, plus a troubleshooting table
+  README.md          full reference: API, physics, training, known limits
+  PROJECT_STATE.md   current status, measured results, what to do next
+  PLAN.md            architecture and why each decision was made
+  CREDITS.md         third-party data attribution — read before publishing
+
+  Datasets are not included. See "Getting weights" and "Training" in README.md.

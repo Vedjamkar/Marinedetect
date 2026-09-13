@@ -1,0 +1,8 @@
+path: D:/Marinedetect/data/crabpot_yolo
+train: train/images
+val: val/images
+test: test/images
+
+nc: 1
+names:
+  0: Crab-Pot
